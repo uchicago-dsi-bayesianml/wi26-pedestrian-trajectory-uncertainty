@@ -1,16 +1,20 @@
-data/raw/
-data/processed/
-*.pkl
+# Data is never committed. See data/README.md for how to build data/raw/raw/ from Trajectron++.
+data/*
+!data/README.md
+
+# Model checkpoints and logs
 *.pt
 *.pth
+*.pkl
+*/models/
+train.log
+
+# Editor, OS and Python clutter
+.DS_Store
 .ipynb_checkpoints/
-__pycache__
+__pycache__/
 *.pyc
 .env
 .btp-venv/
 btp-venv/
-.DS_Store
-mc_dropout/models/
-.DS_Store
-variational_bnn/models/
-train.log
+.venv/
