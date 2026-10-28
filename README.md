@@ -1,825 +1,146 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.png">
+  <img alt="The University of Chicago, MS in Applied Data Science. ADSP 32014 course project." src=".github/assets/banner-light.png">
+</picture>
+
 # Bayesian Trajectory Prediction for Autonomous Driving Safety
 
-> Team: Guardians of the Graph
+> **Example project from Winter 2026.** This is a copy of [khadijahslawal/bayesian-trajectory-prediction](https://github.com/khadijahslawal/bayesian-trajectory-prediction), shown with the authors' work and commit history intact. Their own write-up is [REPORT.md](REPORT.md). Course staff wrote this README and made the edits listed under [Changes by course staff](#changes-by-course-staff), including the section on [what to learn from this project](#what-to-learn-from-this-project) and a short script, `staff/check_pyro_training.py`, that demonstrates its first point. No data is in this repository.
 
-> Team Members: Amulya Rayasam, Haiyang Hu, Ian Kidwell, Khadija Shuaib, Nikhil Sharma
+A car that shares the road with pedestrians has to guess where each of them will be a few seconds from now, and one guess is not enough: a point estimate looks the same whether the pedestrian is walking a straight line or hesitating at a kerb. Can a trajectory model say how sure it is, and can a car use that to choose between proceeding and yielding? The team trained an LSTM on the ETH/UCY pedestrian benchmark to predict 4.8 seconds of movement from 3.2 seconds of history, then built two Bayesian versions of it: one that keeps dropout switched on at inference and averages 50 stochastic passes, and one whose output layer has a variational posterior over its weights, fit with Pyro. A notebook turns the spread of the 50 predicted paths into a safety score and a proceed, slow or yield decision.
 
-This project investigates how uncertainty quantification can make trajectory prediction safer in autonomous driving scenarios. Rather than predicing a single path, our Bayesian models would output a distribution over possible futures. This allows for a downstram safety system to reason about risks given certain levels of uncertainity.
+## Summary
 
-For an end-to-end system the key deliverables are as follows:
+The data are the ETH and UCY pedestrian recordings in the text format redistributed by Trajectron++: frame, pedestrian id, x and y in metres, at 2.5 Hz. Every run of 20 consecutive annotated frames of one pedestrian is a sample, 8 observed steps and 12 to predict, with the observed steps expressed relative to the first of them and the targets relative to the last observed position. Five scenes, ETH, Hotel, Univ, Zara1 and Students001, supply 15,328 training windows and 2,720 validation windows.
 
-- A deterministic baseline LSTM model
-- MC Dropout (primary bayesian method)
-- Variational BNN (secondary bayesian method)
-- Safety frameowrk
+**Baseline.** A two-layer LSTM encoder with 128 hidden units reads the 8 steps; an LSTM cell decodes 12 steps one at a time, feeding each prediction back as the next input, with a linear layer to x and y. Trained for 100 epochs with Adam on the mean Euclidean displacement, which is the ADE metric itself.
 
----
+**MC dropout.** The same network with dropout at 0.3 on the hidden state after encoding and at every decoder step. At inference the dropout layers stay in training mode, 50 passes are averaged, and their variance is the uncertainty.
 
-## Table of Contents
+**Variational output layer.** The same network again, with the 258 weights of the final linear layer given a Normal(0, 1) prior and a factorized Normal variational posterior, fit by stochastic variational inference on an ELBO with a fixed observation noise of 0.1 m. Fifty weight samples give 50 paths.
 
-- [Project Overview](#project-overview)
-- [Dataset](#dataset)
-- [Models](#models)
-  - [Baseline LSTM](#baseline-lstm)
-  - [MC Dropout](#mc-dropout-lstm)
-  - [Variational BNN](#variational-bnn)
-  - [Comparison and Results](#results-and-comparison)
-- [Safety Framework](#safety-framework)
-- [Conclusion](#conclusion)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Repository Structure](#repository-structure)
+**Safety framework.** On one batch of 32 windows, the mean predictive variance over the 12 steps is thresholded into SAFE, CAUTION and UNSAFE, drawn as fans of 50 paths, checked against actual error in a calibration plot, and illustrated as a crossing scenario in which a car proceeds past a confident prediction and yields to an uncertain one.
 
----
+The headline numbers: the baseline and MC dropout are tied at an average error of 0.42 m and a final error of 0.89 m on the validation windows; the variational model is worse, 0.58 m and 1.03 m, with a far smaller variance, which the write-up reads as posterior collapse and a reason to prefer MC dropout. The staff section explains why the variational model's LSTM was never trained, why no test evaluation took place, and why the trajectory plots are not pictures of trajectories.
 
-## Project Overview
+## Team and contributions
 
-Autonomous vehicles must predict pedestrian trajectories to make safe navigation decisions. Deterministic models (most neural networks) produce a single predicted path with no indication of how confident that prediction is. This creates multiple problems as there is no uncertainity estimates as such the model cannot tell when it is uncertain or confident. In the case of autonomous driving this can be potentially be dangerous as a model that is confidently wrong is more dangerous than one that flags its own uncertainty.
+Team "Guardians of the Graph", Winter 2026.
 
-This project implements **Bayesian uncertainty quantification** for trajectory prediction, enabling an autonomous vehicle to ask not just *where will this pedestrian go?* but *how certain are we about that prediction?* High uncertainty triggers conservative safety decisions (yield, slow down); while low uncertainty allows the vehicle to proceed.
+- **Khadija Shuaib** ([@khadijahslawal](https://github.com/khadijahslawal)): everything on the main branch, in 22 commits: the data loader, the three model scripts, the safety notebook and its plots, the architecture and intuition figures, and the write-up. She appears as Khadijah in the commit history.
+- **Amulya Rayasam**: two further variational implementations on the team's `archived` branch, a Bayes-by-backprop LSTM decoder cell with an annealed KL weight, and a Pyro model with an automatic diagonal-Normal guide and heteroscedastic outputs, both evaluated with negative log-likelihood and expected calibration error. Neither reached a useful error, about 6 m on average, and neither made the main branch.
+- **Haiyang Hu** ([@haiyanghu2432](https://github.com/haiyanghu2432)): a first safety-framework notebook on the archived branch, with an MC dropout model trained on squared error, a plotted AV risk zone and a braking threshold on variance over time.
+- **Nikhil Sharma** ([@npsharma03](https://github.com/npsharma03)): a refactor of the MC dropout script on the archived branch, with notes on a teacher-forcing variant that performed worse, the short README that preceded the final one, and the team's Canvas submissions.
+- **Ian Kidwell** ([@iakidwell](https://github.com/iakidwell)): the initial repository layout, a data exploration notebook and the first baseline LSTM notebook, in an `experiments/` folder that the restructuring of February 27 replaced.
 
-**Primary method:** Monte Carlo Dropout — approximate Bayesian inference via stochastic forward passes at inference time.
+The repository ran from February 20 to March 12, 2026. This copy has the default branch only; the `archived` branch with the other members' earlier work is in the authors' repository. The attributions follow the commit history there.
 
-**Secondary method:** Variational Bayesian Neural Networks via Pyro — principled Bayesian inference by learning distributions over network weights using ELBO optimisation.
+## Getting started
 
-**Evaluation:** Standard ADE/FDE metrics on the held-out test scene, following the leave-one-out protocol. 
-
----
-
-## Dataset
-
-The project uses the [ETH/UCY pedestrian trajectory datasets](https://github.com/StanfordASL/Trajectron-plus-plus), sourced from the Trajectron++ repository. These are standard benchmarks in trajectory prediction research, recorded via
-overhead cameras at fixed locations capturing bird's eye view coordinates (x, y in metres
-from the camera origin).
-
-### Scene Descriptions
-
-| Scene | Environment | Characteristics |
-|---|---|---|
-| ETH | University campus | Crowded, complex multi-pedestrian interactions |
-| Hotel | Hotel entrance/exit | Sparser, more linear movements |
-| UNIV | University campus | Mix of individuals and small groups |
-| ZARA1 | Shopping area | Natural pedestrian behaviour, moderate density |
-| ZARA2 | Shopping area (different location) | Held out entirely for testing |
-| ZARA3 | Shopping area | Additional training data |
-| Students001 | University | Student foot traffic patterns |
-| Students003 | University | Additional student trajectories |
-
-All datasets capture **pedestrian-to-pedestrian interactions only** — no vehicles or cyclists.
-Each scene was recorded from a fixed overhead camera, giving consistent bird's eye view
-perspective across all scenes.
-
-### Data Format
-
-Raw files are tab-separated with four columns:
-```
-frame_id    pedestrian_id    x        y
-780         1.0              8.46     3.59
-790         1.0              9.57     3.79
-800         1.0              10.67    3.99
-800         2.0              13.64    5.80
-810         1.0              11.73    4.32
-810         2.0              12.09    5.75
-```
-
-Multiple pedestrians can share the same frame, at varying proximity based on their x, y
-coordinates. Frames are recorded at 2.5 Hz (one frame every 0.4 seconds).
-
-### Trajectory Extraction
-
-From the raw frame-by-frame data, overlapping sequences of 20 consecutive frames per
-pedestrian are extracted — 8 observed timesteps (3.2s) followed by 12 prediction
-timesteps (4.8s):
-```
-Observation (8 × 2):       Prediction (12 × 2):
-[[x₁, y₁],                 [[x₉,  y₉],
- [x₂, y₂],                  [x₁₀, y₁₀],
- ...                         ...
- [x₈, y₈]]                  [x₂₀, y₂₀]]
- ↑ Past (given to model)    ↑ Future (what the model predicts)
-```
-
-### Normalisation
-
-Raw coordinates are absolute positions in metres from the camera origin, which vary
-significantly across scenes. To make the learning problem consistent, trajectories are
-converted to relative displacements:
-
-- **Observations** → relative to the first observed position
-- **Predictions** → relative to the last observed position
-
-This centres each trajectory around the origin, removes scene-specific coordinate offsets,
-and gives the model a consistent input scale regardless of where in the scene the
-pedestrian is located.
-
-### Dataset Splits
-
-| Scene | Train | Val | Test | Training samples |
-|---|---|---|---|---|
-| ETH | ✓ | ✓ | ✓ | ✓ |
-| Hotel | ✓ | ✓ | ✓ | ✓ |
-| UNIV | ✓ | ✓ | — | ✓ |
-| ZARA1 | ✓ | ✓ | ✓ | ✓ |
-| ZARA2 | ✓ | ✓ | ✓ | **held out** |
-| ZARA3 | ✓ | ✓ | — | ✓ |
-| Students001 | ✓ | ✓ | ✓ | ✓ |
-| Students003 | ✓ | ✓ | ✓ | ✓ |
-
-**Training samples:** 15,328 &nbsp;|&nbsp; **Val samples:** 5,521 &nbsp;|&nbsp;
-**Test samples:** 34,161
-
----
-
-## Models
-
-### Baseline LSTM
-
-A standard encoder-decoder LSTM with no dropout, producing a single deterministic
-trajectory prediction with no uncertainty estimate. This serves as the performance
-floor — any Bayesian model should match this on ADE/FDE while additionally
-providing uncertainty quantification.
-
-#### Architecture
-
-![Baseline LSTM Architecture](baseline/figures/baseline_architecture.png)
-
-The model follows a standard sequence-to-sequence design:
-
-- **Encoder:** A 2-layer LSTM reads the 8 observed relative displacement steps
-  `(Δx, Δy)` and compresses the trajectory history into a hidden state vector `(h, c)`
-- **Decoder:** An LSTMCell auto-regressively generates predictions one step at a time —
-  each predicted step is fed back as input for the next, propagating uncertainty
-  naturally across the horizon
-- **Output layer:** A linear projection from hidden dimension (128) to 2D displacement
-  at each step
-```python
-class BaselineLSTM(nn.Module):
-    def __init__(self, input_dim=2, hidden_dim=128, pred_len=12, num_layers=2):
-        super().__init__()
-        # Encoder: compress observation history into hidden state
-        self.encoder = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
-        # Decoder: auto-regressively predict future steps
-        self.decoder_cell = nn.LSTMCell(input_dim, hidden_dim)
-        self.output_layer = nn.Linear(hidden_dim, 2)
-
-    def forward(self, obs_seq):
-        _, (h_n, c_n) = self.encoder(obs_seq)
-        h, c = h_n[-1], c_n[-1]
-        dec_input = obs_seq[:, -1, :]   # start from last observed step
-        preds = []
-        for _ in range(self.pred_len):
-            h, c = self.decoder_cell(dec_input, (h, c))
-            out = self.output_layer(h)
-            preds.append(out)
-            dec_input = out             # feed prediction back as next input
-        return torch.stack(preds, dim=1)
-```
-
-#### Training
-
-- **Loss:** Average Displacement Error (ADE) — directly optimises the metric being evaluated
-- **Optimiser:** Adam (lr=1e-3) with ReduceLROnPlateau scheduler (patience=5, factor=0.5)
-- **Gradient clipping:** max norm 1.0 to prevent exploding gradients in the LSTM
-
-![Baseline Training Results](baseline/figures/baseline_training_results.png)
-
-- Training loss decreases steadily across 100 epochs.
-- ADE and FDE improve sharply in the first 20 epochs then plateau — characteristic of LSTM convergence on this dataset.
-- The best FDE of **0.8956** is achieved at epoch 50, after which the model begins to slightly overfit to training trajectories.
-
-#### Results
-
-| Metric | Value |
-|---|---|
-| Best ADE | 0.4207 (epoch 50) |
-| Best FDE | 0.8956 (epoch 50) |
-| Uncertainty | None - single point estimate |
-
-#### Limitation
-
-The baseline has no mechanism to express confidence. When predicting a pedestrian who
-is about to change direction, it produces the same format of output as when predicting
-a pedestrian walking in a straight line — a single trajectory with no indication that
-the first case is far less certain. This is the fundamental limitation the Bayesian
-models address.
-
-### MC Dropout LSTM
-
-#### The Core Idea — How Confident Is the Model?
-
-A standard neural network always gives one answer:
-```
-Input (pedestrian position) → Neural Network → "The pedestrian will be at (5.2, 3.1)"
-```
-
-MC Dropout runs the network **50 times**, each time randomly switching off different
-neurons. Because each run uses a slightly different network, each run gives a slightly
-different answer:
-```
-Input → Network #1  (mask A) → Prediction: (5.1, 3.0)
-Input → Network #2  (mask B) → Prediction: (5.3, 3.2)
-Input → Network #3  (mask C) → Prediction: (5.0, 3.1)
-...                              ...
-Input → Network #50 (mask N) → Prediction: (5.2, 3.0)
-
-Mean:   (5.2, 3.1)  ← the predicted trajectory
-Spread: ±0.1–2.0m   ← the epistemic uncertainty
-```
-
-Think of it like **100 experts voting on where the pedestrian will go**. When the
-experts broadly agree, the pedestrian's path is predictable and the AV can proceed.
-When the experts disagree wildly, something complex is happening and the AV should
-slow down.
-
-#### Why Does Uncertainty Matter for Safety?
-
-![MC Dropout Intuition](mc_dropout/figures/mc_dropout_intuition.png)
-
-**Scenario 1 — Empty sidewalk:** The pedestrian has been walking straight for 3.2
-seconds with nothing in the way. All 50 forward passes predict nearly the same
-trajectory. Uncertainty is low (±0.1m). AV decision: **PROCEED**.
-
-**Scenario 2 — Crowded intersection:** The pedestrian is approaching an intersection
-with others going in different directions. The 50 forward passes spread out — some
-predict left, some straight, some right. Uncertainty is high (±2.0m). AV decision:
-**BRAKE**.
-
-This is the key insight: **the same model, the same architecture, produces uncertainty
-estimates that directly reflect how difficult the scene is to predict.**
-
-#### The Dropout Trick — Training vs Inference
-
-Standard dropout is only active during training to prevent overfitting, then switched
-off at inference. MC Dropout deliberately keeps it on at inference:
-```
-Training:  Dropout ON  → prevents overfitting
-Standard inference:  Dropout OFF  → one deterministic prediction
-MC Dropout inference:  Dropout ON  → different prediction each pass ← KEY CHANGE
-```
-
-This is grounded in Bayesian theory — Gal & Ghahramani (2016) showed that a neural
-network trained with dropout is equivalent to approximate variational inference in a
-deep Gaussian process. Each dropout mask corresponds to a sample from the approximate
-posterior over weights $q(\mathbf{w})$.
-
-#### Mathematical Formulation
-
-MC Dropout approximates a Bayesian posterior by running the network T=50 times,
-each with a different random dropout mask. The final prediction is the average
-across all runs:
-```
-Run network 50 times with different dropout masks:
-
-pass 1  (mask A) → prediction_1
-pass 2  (mask B) → prediction_2
-...
-pass 50 (mask N) → prediction_50
-
-predicted trajectory  = mean(prediction_1 ... prediction_50)
-epistemic uncertainty = variance(prediction_1 ... prediction_50)
-```
-
-Concretely, for each prediction step:
-```
-mean     = (pred_1 + pred_2 + ... + pred_50) / 50
-variance = average of squared differences from the mean
-```
-
-A **low variance** means all 50 passes agreed → the model is confident.
-A **high variance** means the 50 passes spread out → the model is uncertain.
-
-This is mathematically grounded in the work of Gal & Ghahramani (2016), who showed
-that a dropout-trained network is equivalent to approximate variational inference —
-each dropout mask corresponds to sampling a different set of weights from an
-approximate posterior distribution over the network parameters.
-
-
-#### Architecture
-
-![MC Dropout Architecture](mc_dropout/figures/mc_dropout_architecture.png)
-
-The top half shows training — dropout is active, randomly deactivating 30% of neurons
-each batch. The bottom half shows inference — dropout stays on, and 50 stochastic
-forward passes are aggregated into a mean trajectory and variance estimate.
-```python
-class MCDropoutLSTM(nn.Module):
-    def __init__(self, input_dim=2, hidden_dim=128, pred_len=12,
-                 num_layers=2, dropout_p=0.3):
-        super().__init__()
-        self.encoder = nn.LSTM(input_dim, hidden_dim, num_layers,
-                               batch_first=True, dropout=dropout_p)
-        self.dropout = nn.Dropout(p=dropout_p)
-        self.decoder_cell = nn.LSTMCell(input_dim, hidden_dim)
-        self.output_layer = nn.Linear(hidden_dim, 2)
-
-    def enable_dropout(self):
-        """Keep dropout ON at inference — the key MC Dropout trick."""
-        for m in self.modules():
-            if isinstance(m, nn.Dropout):
-                m.train()  # overrides .eval() which would disable dropout
-
-@torch.no_grad()
-def mc_predict(model, obs_seq, n_samples=50):
-    model.eval()
-    model.enable_dropout()  # ← critical: dropout stays active
-
-    samples = torch.stack(
-        [model(obs_seq) for _ in range(n_samples)], dim=0
-    )  # (50, B, 12, 2)
-
-    mean     = samples.mean(dim=0)  # predicted trajectory
-    variance = samples.var(dim=0)   # epistemic uncertainty
-    return mean, variance, samples
-```
-
-#### Training
-
-- **Loss:** ADE loss — directly optimises the displacement metric being evaluated
-- **Optimiser:** Adam (lr=1e-3) with ReduceLROnPlateau (patience=5, factor=0.5)
-- **Dropout rate:** 0.3 — applied in encoder (inter-layer) and decoder (per step)
-- **Gradient clipping:** max norm 1.0
-
-![MC Dropout Training](mc_dropout/figures/mc_dropout_training.png)
-
-- Loss decreases steadily across all 100 epochs.
-- ADE and FDE oscillate after epoch 50, indicating the model has reached its capacity for this architecture size.
-- The uncertainty track (rightmost panel) stabilises around 0.024, confirming the model has settled into a consistent epistemic confidence level.
-- The best model checkpoint is saved at **epoch 50** based on lowest validation FDE.
-
-#### Results
-
-| Metric | Value |
-|---|---|
-| Best ADE | 0.4209 (epoch 95) |
-| Best FDE | **0.8892** (epoch 50) |
-| Mean uncertainty | 0.024 |
-| Inference samples | 50 |
-| Inference time | ~50× baseline |
-
-### Variational BNN
-
-> Variational Bayesian Neural Network (Pyro)
-
-#### The Core Idea — Learning Distributions Over Weights
-
-A standard neural network learns a **single fixed value** for each weight:
-```
-Training → w = 0.42  (fixed forever)
-Inference → always uses w = 0.42 → one prediction
-```
-
-A Variational BNN instead learns a **probability distribution** over each weight:
-```
-Training → w ~ N(μ=0.42, σ=0.15)  (a distribution, not a point)
-Inference → sample w₁=0.38, w₂=0.51, w₃=0.44 ... × 50 times
-         → 50 different networks → 50 different predictions
-         → mean = trajectory estimate, variance = uncertainty
-```
-
-This is more principled than MC Dropout, rather than approximating uncertainty through random neuron deactivation, the model **explicitly learns how uncertain it should be** about each weight parameter.
-
-#### Standard vs Bayesian Weights
-
-![Variational BNN Intuition](variational_bnn/figures/vbnn_intuition.png)
-
-The left panel shows a standard LSTM weight — a single fixed value, one possible
-network, no uncertainty. The middle panel shows a Variational BNN weight — a full
-probability distribution, where the spread of the posterior directly encodes how
-uncertain the model is about that parameter. The right panel shows the practical
-effect: sampling 50 weight sets produces 50 different trajectory fans, and the spread
-of those fans is the uncertainty estimate.
-
-#### Mathematical Formulation
-
-Variational inference frames learning as an optimisation problem. Instead of finding
-the exact posterior over weights (intractable), we find the closest tractable
-distribution by maximising the **Evidence Lower Bound (ELBO)**:
-```
-ELBO = E[log p(data | weights)] - KL[q(weights) || p(weights)]
-         ↑                              ↑
-    reconstruction term           KL penalty term
-    (fit the training data)       (stay close to the prior)
-```
-
-The two terms balance each other:
-- **Reconstruction** pushes the weight distributions to explain the training data well
-- **KL penalty** prevents the distributions from straying too far from the prior
-  `p(w) = N(0, 1)` — acting as a regulariser that stops overfitting
-
-Each weight learns two parameters instead of one:
-```
-Standard LSTM:      w = 0.42                      (one fixed value)
-Variational BNN:    μ = 0.42,  σ = softplus(ρ)   (mean and spread)
-```
-
-The `softplus` function ensures σ is always positive. During training, Pyro optimises
-μ and ρ for every weight in the output layer via gradient descent on the ELBO.
-
-At inference, weights are sampled from the learned distribution 50 times:
-```
-w_1 ~ N(μ, σ)  →  trajectory prediction 1
-w_2 ~ N(μ, σ)  →  trajectory prediction 2
-...
-w_50 ~ N(μ, σ) →  trajectory prediction 50
-
-mean(predictions)     = predicted trajectory
-variance(predictions) = epistemic uncertainty
-```
-
-#### Architecture
-
-![Variational BNN Architecture](variational_bnn/figures/vbnn_architecture.png)
-
-A key design decision: only the **output layer** is Bayesian. The encoder and decoder
-LSTMs remain deterministic. This is the standard practical approach — making all LSTM
-cell weights Bayesian is technically valid but significantly increases training
-complexity with diminishing returns. The output layer weights have the most direct
-effect on prediction uncertainty and are sufficient to produce meaningful epistemic
-estimates.
-
-The top section shows the weight comparison (point vs distribution) and the ELBO
-objective. The middle shows the model flow — standard encoder/decoder feeding into
-the Bayesian output layer. The bottom shows inference: weight samples are drawn from
-the learned posterior $q(w \mid \mu_w, \sigma_w)$ and applied via `F.linear` (not
-`nn.Parameter` mutation, which would destabilise Pyro's trace).
-```python
-class BayesianTrajectoryPredictor:
-
-    def model(self, obs_seq, gt=None):
-        """Generative model — defines p(y | x, w) * p(w)."""
-        # Prior over output layer weights
-        w = pyro.sample("output_w",
-                        dist.Normal(torch.zeros(2, 128), torch.ones(2, 128)).to_event(2))
-        b = pyro.sample("output_b",
-                        dist.Normal(torch.zeros(2), torch.ones(2)).to_event(1))
-
-        # Run LSTM encoder/decoder, apply sampled weights functionally
-        h = self._encode_decode(obs_seq, w, b)
-
-        # Observation likelihood
-        with pyro.plate("data", obs_seq.size(0)):
-            pyro.sample("obs", dist.Normal(h, 0.1).to_event(2), obs=gt)
-
-    def guide(self, obs_seq, gt=None):
-        """Variational posterior — defines q(w) with learnable μ, σ."""
-        w_mu  = pyro.param("w_mu",  torch.zeros(2, 128))
-        w_rho = pyro.param("w_rho", -5 * torch.ones(2, 128))  # tight init
-        w_sigma = torch.nn.functional.softplus(w_rho)          # ensures σ > 0
-
-        pyro.sample("output_w", dist.Normal(w_mu, w_sigma).to_event(2))
-
-@torch.no_grad()
-def vbnn_predict(lstm, bayes_predictor, obs_seq, n_samples=50):
-    preds = []
-    for _ in range(n_samples):
-        # Sample weight set from learned posterior via guide trace
-        trace = pyro.poutine.trace(bayes_predictor.guide).get_trace(obs_seq)
-        w = trace.nodes["output_w"]["value"]
-        b = trace.nodes["output_b"]["value"]
-        # Apply sampled weights — F.linear avoids mutating nn.Parameter
-        pred = run_with_weights(lstm, obs_seq, w, b)
-        preds.append(pred)
-
-    samples = torch.stack(preds, dim=0)
-    return samples.mean(0), samples.var(0), samples
-```
-
-#### Training
-
-- **Library:** [Pyro](http://pyro.ai) probabilistic programming framework
-- **Inference:** Stochastic Variational Inference (SVI) with `Trace_ELBO`
-- **Optimiser:** Pyro Adam (lr=1e-3)
-- **Weight init:** `w_rho = -5` — tight initial distributions prevent KL explosion
-- **Epochs:** 100
-
-![Variational BNN Training](variational_bnn/figures/vbnn_training.png)
-
-- The ELBO loss (leftmost panel) decreased from ~19,000 to ~17,000 — note this is not comparable to ADE or MSE loss, it is measured in nats and reflects the combined reconstruction + KL objective. 
-- ADE and FDE improved over the first 50 epochs then plateaued.
-- The uncertainty panel shows a consistent upward trend; as training progresses, the model learns to widen its weight posteriors, which is the expected behaviour as it explores the parameter space.
-
-#### Results
-
-| Metric | Value |
-|---|---|
-| Best ADE | 0.5813 (epoch 95) |
-| Best FDE | **1.0315** (epoch 75) |
-| Mean uncertainty | 0.003 |
-| Inference samples | 50 |
-| Training loss | ELBO (not comparable to ADE loss) |
-
-#### Comparison with MC Dropout
-
-| Property | MC Dropout | Variational BNN |
-|---|---|---|
-| Uncertainty source | Random neuron masks | Learned weight distributions |
-| Bayesian grounding | Approximate (Gal & Ghahramani) | Principled (variational inference) |
-| Implementation complexity | Low | High (requires Pyro) |
-| Training objective | ADE loss | ELBO |
-| Best FDE | **0.8892** | 1.0315 |
-| Uncertainty scale | 0.024 (informative) | 0.003 (compressed) |
-
-Despite being the more principled approach, Variational BNN underperforms MC Dropout
-on both ADE and FDE. The weight posterior collapse (very small σ) means the model is
-not effectively using its uncertainty capacity — a known challenge with variational
-inference in deep networks when the prior is too strong relative to the data signal.
-MC Dropout's simpler approximation produces more informative uncertainty estimates
-for this dataset and architecture, making it the recommended model for the safety
-framework.
-
----
-
-## Results and Comparison
-
-All models trained for 100 epochs with Adam optimiser and ReduceLROnPlateau scheduler. Evaluated on ZARA2 test set.
-
-| Model | Best ADE | Best FDE | Uncertainty | Inference samples |
-|---|---|---|---|---|
-| Baseline LSTM | 0.4207 | 0.8956 | N/A | 1 |
-| MC Dropout | **0.4209** | **0.8892** | 0.031 | 50 |
-| Variational BNN | 0.5813 | 1.0315 | 0.003 | 50 |
-
-**ADE** (Average Displacement Error): mean L2 distance between predicted and ground truth positions across all timesteps (metres, normalised).
-
-**FDE** (Final Displacement Error): L2 distance at the final prediction timestep only.
-
-#### Why MC Dropout Wins
-
-- MC Dropout matches the deterministic baseline on both metrics while adding meaningful uncertainty quantification — demonstrating that the Bayesian approach costs nothing in predictive performance. Variational BNN underperforms on raw metrics but still provides valid uncertainty estimates.
-- MC Dropout is simpler to implement, trains with standard backpropagation, and in practice frequently matches or outperforms more principled variational approaches. On this dataset, MC Dropout achieves FDE 0.8892 vs Variational BNN's 1.0315, while also producing higher and more informative uncertainty estimates (0.024 vs 0.003).
-
-- This is a well-documented finding in the literature — the simplicity of the dropout approximation does not come at the cost of predictive quality, making it the pragmatic choice for safety-critical deployment.
-
----
-
-## Safety Framework
-
-**Notebook:** `safety/safety_analysis.ipynb` — run all cells top to bottom to reproduce all results and plots.
-
-The safety framework is the practical payoff of the whole project. Both Bayesian models
-are loaded, run on the ZARA2 test set, and their uncertainty estimates are translated into
-real safety decisions an autonomous vehicle could act on.
-
-The key question it answers: **given a pedestrian trajectory prediction, should the
-vehicle proceed, slow down, or stop?**
-
-### Safety Score
-
-Each prediction is assigned a scalar safety score in [0, 1] based on its mean epistemic uncertainty across the prediction horizon:
-
-```
-safety_score = 1 - clamp(mean_uncertainty / unsafe_threshold, 0, 1)
-```
-
-Scores are classified into three tiers:
-
-| Classification | MC Dropout threshold | Meaning |
-|---|---|---|
-| SAFE | uncertainty < 0.020 | Proceed normally |
-| CAUTION | 0.020 – 0.040 | Reduce speed |
-| UNSAFE | uncertainty > 0.040 | Yield / stop |
-
-### Visuals 1: Trajectory Predictions with Uncertainty Fans
-
-![MC Dropout Uncertainty Fans](safety/plots/mc_dropout_uncertainty_fans.png)
-![Variational BNN Uncertainty Fans](safety/plots/variational_bnn_uncertainty_fans.png)
-
-Each panel shows one pedestrian from the test set. The **blue line** is what the model
-observed (3.2 seconds of walking). The **green dashed line** is where they actually
-went. The **coloured fan** is all 50 predictions from the model — each slightly
-different because of the stochastic forward passes.
-
-A **tight fan** means all 50 predictions agree → the model is confident.
-A **wide fan** means the predictions spread out → the model is uncertain.
-
-The colour of the fan and title shows the safety classification: green = SAFE,
-orange = CAUTION, red = UNSAFE.
-
-Comparing the two plots: MC Dropout's fans are noticeably wider than Variational
-BNN's. This is not a flaw — it means MC Dropout is more appropriately cautious about
-its predictions, which is exactly the behaviour you want for a safety system. A model
-that is overconfident is more dangerous than one that admits uncertainty.
-
----
-
-### Visuals 2: Uncertainty Over the Prediction Horizon
-
-![Uncertainty Over Time](safety/plots/uncertainty_over_time.png)
-
-This plot answers a simple question: **does the model become less certain the further
-into the future it predicts?**
-
-The answer is yes — and this is the correct behaviour. Both models show uncertainty
-growing steadily from step 1 (0.4 seconds ahead) to step 12 (4.8 seconds ahead). 
-Predicting where someone will be in half a second is much easier than predicting where
-they will be in five seconds.
-
-MC Dropout (blue) grows from near zero to ~0.07 — a 20× increase over the prediction
-window. Variational BNN (red) shows the same upward shape but at a lower scale (~0.01).
-The right panel normalises both to [0, 1] to confirm they have the same growth pattern
-— it is just the absolute scale that differs.
-
-For an autonomous vehicle, this means **near-term predictions should be trusted more
-than far-term ones**, and the safety system should weight uncertainty accordingly.
-
----
-
-### Visual 3: Calibration
-
-![MC Dropout Calibration](safety/plots/mc_dropout_calibration.png)
-![Variational BNN Calibration](safety/plots/variational_bnn_calibration.png)
-
-Calibration answers: **when the model says it is uncertain, is it actually making
-bigger errors?**
-
-A perfectly calibrated model would sit exactly on the dashed diagonal — higher
-predicted uncertainty always means higher actual error. The left scatter plot shows
-each pedestrian as a dot; the red line is the average trend across bins.
-
-MC Dropout shows a positive trend — when uncertainty goes up, errors tend to go up
-too. It is not perfect, but the relationship is there. This means MC Dropout's
-uncertainty estimates are genuinely informative, not just noise.
-
-Variational BNN's scatter is more compressed — most predictions cluster at very low
-uncertainty values regardless of how wrong they are. This confirms that its uncertainty
-estimates are too conservative to be fully useful for safety decisions, even though the
-model's raw trajectory predictions are reasonable.
-
----
-
-### Visuals 4: ETH Crossing Scenario
-
-![Crossing Scenario](safety/plots/crossing_scenario.png)
-
-This is the clearest demonstration of why uncertainty quantification matters for
-autonomous driving.
-
-**Left panel — Low Uncertainty (SAFE):** The pedestrian has been walking in a short,
-predictable path. The model's uncertainty is just 0.00012 — essentially zero. The fan
-is tight, the model is confident, and the AV decision is **PROCEED**.
-
-**Right panel — High Uncertainty (UNSAFE):** A different pedestrian shows much more
-spread in their trajectory. The uncertainty is 0.12925 — orders of magnitude higher.
-The fan spreads widely along the prediction horizon, and the AV correctly decides to
-**YIELD / SLOW DOWN**.
-
-This is exactly what a deterministic baseline cannot do. Both pedestrians would get
-the same format of output from a standard LSTM — a single predicted path with no
-confidence signal. The Bayesian model gives the vehicle the information it needs to
-make a different, safer decision in the second case.
-
----
-
-### Full Model Comparison
-
-![Comparison Table](safety/plots/comparison_table.png)
-
-The comparison table (left) summarises all three models side by side. The bar chart
-(centre) shows how many pedestrians each Bayesian model classified as SAFE, CAUTION,
-or UNSAFE — both models agree closely on classifications despite using different
-approaches to uncertainty. The score distribution (right) shows MC Dropout has a
-higher mean safety score (0.65 vs 0.49), meaning it is more generous about classifying
-pedestrians as safe — but crucially, when it does flag UNSAFE, its uncertainty values
-are larger and more informative.
-
-The headline finding: **MC Dropout matches the deterministic baseline on prediction
-accuracy (FDE 0.8892 vs 0.8956) while adding meaningful uncertainty estimates that
-enable uncertainty-aware safety decisions.** The Bayesian approach is not a trade-off
-— it is a free upgrade for safety-critical systems. Sonnet 4.6Extended
-
----
-
-## Conclusion
-
-**1. MC Dropout matches deterministic performance while adding uncertainty.**
-The Baseline LSTM achieves FDE 0.8956; MC Dropout achieves FDE 0.8892 — essentially identical — while producing meaningful epistemic uncertainty estimates at inference time. The Bayesian approach is not a trade-off; it is a free upgrade for safety-critical systems.
-
-**2. Uncertainty grows with prediction horizon.**
-Both Bayesian models show monotonically increasing uncertainty across the 12-step prediction window, confirming the models have learned that longer-horizon predictions are inherently less reliable. This is the correct behaviour for an autonomous driving safety system.
-
-**3. MC Dropout is better calibrated than Variational BNN.**
-MC Dropout's uncertainty estimates correlate more reliably with actual prediction error. Variational BNN's weight posteriors are too concentrated, producing uncertainty values too small to differentiate high- and low-confidence predictions effectively.
-
-**4. MC Dropout is the recommended model for safety decisions.**
-Higher uncertainty estimates, better calibration, and competitive ADE/FDE make MC Dropout the appropriate choice for downstream safety classification. This is consistent with the broader literature where MC Dropout frequently matches or outperforms more principled variational approaches in practice.
-
-**5. Uncertainty quantification enables adaptive AV behaviour.**
-The crossing scenario demonstrates that uncertainty-aware safety decisions are qualitatively different from deterministic predictions — the same model can appropriately choose to proceed or yield based on prediction confidence, a capability impossible with a point-estimate baseline.
-
----
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/your-repo/bayesian-trajectory-prediction.git
-cd bayesian-trajectory-prediction
-
-# Install dependencies
+```sh
+python3 -m venv .venv && source .venv/bin/activate
 pip install torch numpy pandas matplotlib pyro-ppl jupyter
-
-# Download ETH/UCY data from the Trajectron++ repository
-# Place files in data/raw/raw/{train,val,test}/
 ```
 
----
+Build `data/raw/raw/{train,val,test}/` as described in [data/README.md](data/README.md). Then, from the repository root:
 
-## Usage
-
-### Train all models
-
-```bash
-# Baseline LSTM
+```sh
 python baseline/baseline_lstm.py
-
-# MC Dropout
-python mc_dropout/mcmc.py
-
-# Variational BNN
-python variational_bnn/bnn.py
+python -m mc_dropout.mcmc
+python -m variational_bnn.bnn
 ```
 
-### Run safety analysis
+Each script trains for 100 epochs with seed 42, evaluates on the validation windows every 5 epochs, saves the checkpoint with the lowest final displacement error under its `models/` folder and writes a results CSV. The two Bayesian scripts import `src` as a package, so they must be run as modules from the root; the baseline script puts the root on the path itself. The safety notebook, `safety/safety_analysis.ipynb`, needs both Bayesian checkpoints, which are not committed, and expects to be started from the `safety/` folder.
 
-```bash
-cd safety
-jupyter notebook safety_analysis.ipynb
+The staff check needs no data and runs in under a minute:
+
+```sh
+python staff/check_pyro_training.py
 ```
 
-Run all cells top to bottom. All plots are saved to `safety/plots/`.
+## Data
 
-### Load a trained model for inference
+- **Source:** the BIWI Walking Pedestrians recordings (Pellegrini et al., ICCV 2009, ETH Zurich) and the Crowds-by-Example recordings (Lerner et al., Computer Graphics Forum 2007, University of Cyprus), from fixed overhead cameras, in the text form prepared for Social GAN and redistributed in the [Trajectron++](https://github.com/StanfordASL/Trajectron-plus-plus) repository under its MIT license. Rows are frame, pedestrian id, x and y in metres, one annotated frame per 0.4 seconds.
+- **Terms:** published for research use; cite the original papers. Nothing is committed here. One 5,492-row ETH file and a tensor of ETH test sequences from the first week of the project remain in the history.
+- **How to get it:** [data/README.md](data/README.md).
+- **Scenes and splits:** the scripts train and validate on ETH, Hotel, Univ, Zara1 and Students001. The write-up's table lists eight scenes with Zara2 held out, but Zara2, Zara3 and Students003 are simply unused, and no script evaluates on a test split. The notebook's test loader reads the six whole-scene files, 34,161 windows, four of them training scenes.
+- **Windows:** every run of 20 consecutive annotated frames of one pedestrian, with a stride of one frame, so neighbouring windows share 19 frames. Observations are positions minus the first observed position; targets are positions minus the last observed position. These are positions in a shifted frame, not step-to-step displacements, which matters below.
 
-```python
-import torch
-from mc_dropout.mcmc import MCDropoutLSTM, mc_predict
+## Project structure
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+| Path | Contents |
+|---|---|
+| `REPORT.md` | The authors' write-up: dataset, the three models with diagrams and code excerpts, the safety framework with its plots, conclusions, usage. |
+| `src/data_loader.py` | Reading the text files, cutting 8+12 windows, the relative-position normalisation, and loaders per scene list for train, val and test. |
+| `baseline/baseline_lstm.py` | The deterministic encoder-decoder LSTM, training loop and evaluation. |
+| `mc_dropout/mcmc.py` | The MC dropout LSTM, `mc_predict` with dropout kept on, training and evaluation. Despite the file name there is no Markov chain Monte Carlo in it. |
+| `variational_bnn/bnn.py` | The LSTM with a Pyro model and guide over the output layer, SVI training, sampling-based prediction. |
+| `*/results/training_results.csv` | Validation metrics every 5 epochs for each model. |
+| `*/figures/` | Architecture, intuition and training-history figures for each model. |
+| `safety/safety_analysis.ipynb`, `safety/plots/` | The safety framework on one batch of 32 windows, with its seven plots. |
+| `staff/check_pyro_training.py` | Course staff: does SVI train the LSTM? |
+| `data/README.md` | Course staff: how to rebuild the data folder. |
 
-model = MCDropoutLSTM(input_dim=2, hidden_dim=128, pred_len=12,
-                      num_layers=2, dropout_p=0.3).to(device)
-model.load_state_dict(torch.load('mc_dropout/models/mc_dropout_best.pt'))
+## Method
 
-# obs: (B, 8, 2) tensor of observed relative displacements
-mean, variance, samples = mc_predict(model, obs, n_samples=50)
-# mean:     (B, 12, 2) — predicted trajectory
-# variance: (B, 12, 2) — epistemic uncertainty per step
-# samples:  (50, B, 12, 2) — individual stochastic predictions
-```
+**Baseline.** A batch of (8, 2) observations goes through a two-layer LSTM with 128 hidden units; the top layer's final hidden and cell state seed an LSTM cell, whose first input is the last observed position. Twelve steps are decoded, each passed through a linear layer to (x, y) and fed back as the next input. The loss is the mean over batch and steps of the Euclidean distance between predicted and true relative position. Adam at 1e-3, a plateau scheduler on the training loss (patience 5, factor 0.5), gradient clipping at 1.0, batch size 32, 100 epochs, seed 42, validation every 5 epochs, checkpoint on the best final displacement error.
 
----
+**MC dropout.** The same architecture with a dropout layer at 0.3 applied to the top-layer hidden state before decoding and to the decoder's hidden state at every step; the encoder also has PyTorch's inter-layer dropout of 0.3 during training. `mc_predict` puts the model in evaluation mode, switches every `nn.Dropout` module back to training mode, runs 50 forward passes and returns their mean, variance and the samples. Validation error uses the 50-pass mean; the reported uncertainty is the variance averaged over steps, coordinates and the batch.
 
-## Repository Structure
+**Variational output layer.** The Pyro model draws the output weights W (2 × 128) and bias b from Normal(0, 1), runs the LSTM encoder and decoder with dropout 0.1, applies the sampled weights functionally with `F.linear`, and observes the targets as Normal(prediction, 0.1) inside a plate over the batch. The guide is a factorized Normal with learnable means and softplus-transformed scales initialised at −5, a standard deviation of about 0.007. Trained with `Trace_ELBO` and Pyro's Adam at 1e-3 for 100 epochs. Prediction traces the guide 50 times and reruns the network with each weight sample.
 
-```
-bayesian-trajectory-prediction/
-│
-├── data/
-│   └── raw/                        # ETH/UCY dataset files
-│       └── raw/
-│           ├── train/              # Training splits
-│           ├── val/                # Validation splits
-│           └── test/               # Test splits
-│
-├── src/
-│   ├── __init__.py
-│   └── data_loader.py              # ScenesDataLoader, trajectory extraction, normalisation
-│
-├── baseline/
-│   ├── __init__.py
-│   ├── baseline_lstm.py            # Deterministic LSTM baseline
-│   ├── models/
-│   │   └── baseline_best.pt        # Saved best model weights
-│   └── results/
-│       └── training_results.csv    # Training history
-│
-├── mc_dropout/
-│   ├── __init__.py
-│   ├── mcmc.py                     # MC Dropout LSTM + training + evaluation
-│   ├── models/
-│   │   └── mc_dropout_best.pt      # Saved best model weights
-│   └── results/
-│       └── training_results.csv    # Training history
-│
-├── variational_bnn/
-│   ├── __init__.py
-│   ├── bnn.py                      # Variational BNN via Pyro + training + evaluation
-│   ├── models/
-│   │   ├── vbnn_best.pt            # Saved best model weights
-│   │   └── vbnn_params.pt          # Saved Pyro parameter store
-│   └── results/
-│       └── training_results.csv    # Training history
-│
-├── safety/
-│   ├── safety_analysis.ipynb       # Full safety framework analysis notebook
-│   └── plots/                      # Generated visualisations
-│       ├── mc_dropout_uncertainty_fans.png
-│       ├── variational_bnn_uncertainty_fans.png
-│       ├── uncertainty_over_time.png
-│       ├── mc_dropout_calibration.png
-│       ├── variational_bnn_calibration.png
-│       ├── comparison_table.png
-│       └── crossing_scenario.png
-│
-└── README.md
-```
+**Safety framework.** For each window, the variance is averaged over steps and coordinates; the score is 1 minus that average over an upper threshold, clamped to [0, 1]. Labels are SAFE below 0.020, CAUTION to 0.040 and UNSAFE above for MC dropout, and 0.002 and 0.004 for the variational model, chosen to match its scale. The fan plots draw the 50 sample paths per window; the calibration plot bins the 32 windows into deciles of variance against mean error; the crossing scenario takes the least and the most uncertain window in the batch and draws a straight car path with a conflict circle of three final-step standard deviations.
+
+### What is Bayesian here
+
+MC dropout rests on Gal and Ghahramani's result that a network trained with dropout before every weight layer is doing approximate variational inference: the dropout masks define a variational distribution over the weights, and the dropout-regularised objective is an evidence lower bound up to constants. Keeping dropout on at test time samples from that approximate posterior, so the mean of 50 passes is an approximate posterior predictive mean and their spread is the epistemic part of the predictive uncertainty. Here dropout is applied to the hidden state at two points rather than before every weight layer, and the inter-layer dropout inside `nn.LSTM` stays off at inference, because `model.eval()` disables it and only `nn.Dropout` modules are switched back on. The approximation is loose, but it is the right idea and the sampling is done correctly.
+
+The variational output layer is a genuine, if small, Bayesian model: a prior over 258 weights, a variational family, an ELBO with the KL term to the prior and a Gaussian likelihood, optimised by SVI, and prediction by sampling the posterior. The observation noise of 0.1 m is fixed rather than learned, so there is no aleatoric term, and the data term weights each squared metre of error by 50. Because the rest of the network is deterministic, the output weights are the only source of predictive spread, and with the posterior scales starting at 0.007 and a strong likelihood pulling them tighter, a predictive variance of 0.003 m², a standard deviation of about 5 cm, is what this setup produces. It is also the part of the model that did not train, below.
+
+The baseline is not Bayesian; it is the point-estimate comparison. The topic proposal listed Kalman and particle filters, hidden Markov models, a VAE and MCMC; none of those were built, and the archived branch's fuller Bayesian LSTM did not work.
+
+## Results
+
+Every number is on the validation windows of the five training scenes, read from the saved CSVs, evaluated every 5 epochs, best epoch by final displacement error. Nothing was evaluated on a test split.
+
+| Model | Best ADE (m) | Best FDE (m) | Predictive variance at the best epoch (m²) |
+|---|---|---|---|
+| Baseline LSTM | 0.4207 (epoch 50) | 0.8956 (epoch 50) | none |
+| MC dropout LSTM | 0.4187 (epoch 50) | 0.8892 (epoch 50) | 0.0251 |
+| Variational output layer | 0.5813 (epoch 95) | 1.0315 (epoch 75) | 0.0034 |
+
+ADE is the mean distance between predicted and true position over the 12 steps; FDE is the distance at the last step. The write-up's own table gives the MC dropout's best ADE as 0.4209 at epoch 95; the CSV and the training-history figure say 0.4187 at epoch 50.
+
+**Safety framework**, on the first 32 windows of the ETH scene file. MC dropout: 22 SAFE, 2 CAUTION, 8 UNSAFE, mean score 0.654, batch variance 0.0314. Variational model: 23, 2 and 7, mean score 0.485, batch variance 0.0032. The MC dropout variance grows from 0.0031 at step 1 to 0.0691 at step 12, a 22-fold increase; the variational model's grows from near zero to about 0.011. The crossing scenario's confident pedestrian has a variance of 0.00012 and the uncertain one 0.129.
+
+In standard deviations, MC dropout's 0.025 m² is 16 cm, and its final-step 0.069 m² is 26 cm, against an average error of 42 cm and a final error of 89 cm.
+
+## What to learn from this project
+
+Course staff added this section. The pipeline is the team's own, the MC dropout model is sound, and the write-up is unusually readable; the points below are about checking what the code does before writing about it.
+
+- **Check that your Bayesian model trained.** The Pyro model uses the LSTM encoder and decoder without registering them with `pyro.module`, so the SVI optimiser only knows about the four tensors in Pyro's parameter store, and the LSTM's 267,000 weights never move from their random initialisation. `staff/check_pyro_training.py` shows it: zero change in any LSTM weight across 30 SVI steps, and movement as soon as the module is registered. The "Variational BNN" results are those of a Bayesian linear read-out on top of an untrained recurrent network, which is why it is 16 cm worse than a baseline whose architecture it shares, and why its variance is so small. The write-up's diagnosis, posterior collapse because the prior is too strong, and the conclusion that MC dropout wins, both rest on this. One line fixes it. A model that is worse than its deterministic twin, a checkpoint whose weights equal their initialisation, a loss that barely moves: any one of these is the cue to look.
+- **"Held out" has to be true in the code.** The write-up and the notebook report results "on the ZARA2 test set". No script loads a test split; every number is the validation set of the five training scenes, and that set also chose the checkpoints. The notebook's test loader reads six whole-scene files, and for ETH the whole scene is exactly the training file plus the validation file, row for row, with the other training scenes laid out the same way. Its batch of 32, on which every safety plot is made, is the first 32 windows of the ETH file: training data. The leave-one-scene-out protocol that the write-up names is the standard for this benchmark, and the loader can do it; it was never run.
+- **Plot in the coordinates your data are in.** The loader produces positions relative to the first and last observation, not step-to-step displacements; the write-up describes the inputs as displacements throughout, and the notebook takes a cumulative sum before plotting "to recover absolute positions". The fans therefore show cumulative sums of positions: paths 50 m long for 4.8 seconds of walking, observed and predicted segments that both start at the origin because they are in two different frames, and a conflict circle whose radius is in metres drawn on axes that are not. The classification, calibration and growth numbers are computed before the cumulative sum and are unaffected; the pictures are not of anything a pedestrian did.
+- **Compare the spread to the error.** MC dropout's standard deviation is 16 cm on average and 26 cm at the final step; the error is 42 cm on average and 89 cm at the final step. The 50 paths in a fan therefore rarely reach the true one, which is what the calibration scatter shows and what the proposal's own success criterion, 90 percent intervals covering 90 percent of trajectories, would have made plain. It was never computed. Dropout variance is only the epistemic part; there is no aleatoric term, and the fixed 0.1 m noise in the Pyro model is not learned from anything. A calibration curve from 32 points in 10 bins cannot be read either way.
+- **Ask what your uncertainty is tracking.** The SAFE pedestrian in the crossing scenario barely moves (variance 0.00012); the UNSAFE one walks far. With outputs that are positions relative to the last observation, a faster walker has larger outputs, and dropout noise on the hidden state scales with them. The thresholds were set by eye to the MC dropout's variance scale and then divided by ten for the other model so that the two produce similar counts, which makes the agreement between their classifications circular. Whether the score separates ambiguous situations from fast ones is the question the framework was built to answer, and it does not.
+- **Keep illustrations apart from results.** The intuition figures with ±0.1 m and ±2.0 m of uncertainty are drawn scenarios, not model output, but the write-up describes them as what the 50 passes produce. Diagrams are useful; label them as diagrams. A fragment of an AI model's name sits at the end of the comparison section, a sign that drafted text went out unread.
+- **Small things.** The MC dropout file is called `mcmc.py`. The encoder's inter-layer dropout is off at MC inference. The default scene list in `get_train_loader` names a scene that does not exist. The install instructions clone `your-repo`. The write-up gives the MC dropout's mean uncertainty as 0.024 in one table and 0.031 in another. There is no license.
+
+What the project does well: a compact, readable implementation of a sequence-to-sequence LSTM and of MC dropout, with a prediction function that does the one thing MC dropout requires; a Pyro model written by hand, with an explicit model and guide rather than an automatic one; results saved as CSVs, so that every number in the write-up can be checked, and was; honest reporting that the more principled method did worse, even if the reason was misdiagnosed; a seeded training setup that checkpoints on validation error; and a write-up that explains MC dropout and variational inference to a reader who has never met them, with an evaluation design, leave one scene out, ADE and FDE, calibration, that is the right one even though it was not carried out.
+
+## About this project
+
+This project was built in Bayesian Machine Learning with Generative AI Applications (ADSP 32014), part of the Master of Science in Applied Data Science at the University of Chicago, in Winter 2026. It is shown here as an example for later cohorts.
+
+## Changes by course staff
+
+Course staff forked the authors' repository and made these edits. The authors' code, notebook and figures are unchanged.
+
+- Renamed the authors' README to `REPORT.md`, unchanged, and added this README with the program banner.
+- Added `staff/check_pyro_training.py`, which runs the authors' Pyro model for 30 SVI steps on random tensors, with and without `pyro.module`, and prints how much the LSTM weights change.
+- Added `data/README.md` with the steps to rebuild the data folder from Trajectron++, and tidied `.gitignore` so that data, checkpoints and editor files stay out.
+
+## License
+
+The authors have not added a license, so their work is shown here under GitHub's terms for public repositories. Ask them before reusing it. The datasets have their own terms, above.
